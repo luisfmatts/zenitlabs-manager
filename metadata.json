@@ -1,0 +1,6 @@
+{
+  "name": "ZenitLabs",
+  "description": "Sistema de gestión de órdenes en tiempo real de ZenitLabs con panel de navegación lateral, dashboard centralizado, métricas de rendimiento y simulación en tiempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
