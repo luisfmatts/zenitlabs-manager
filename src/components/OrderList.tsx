@@ -23,14 +23,78 @@ import {
   Check,
   X,
   SlidersHorizontal,
-  ArrowLeft
+  ArrowLeft,
+  Copy,
+  ChevronDown,
+  ArrowUp,
+  ArrowDown,
+  Settings,
+  Gift,
+  ShoppingBag,
+  Heart,
+  Info,
+  Layers,
+  Package,
+  Tag,
+  DollarSign,
+  Smile,
+  FileText,
+  Camera,
+  Image as ImageIcon,
+  Award,
+  Plus,
+  Pencil
 } from 'lucide-react';
-import { Order, OrderStatus } from '../types';
+import { Order, OrderStatus, StaffMember } from '../types';
 import { CopyableText } from './CopyableText';
+import { loadOrderFields, loadOrderCategories, OrderField } from '../lib/orderFields';
+import OrderFieldsConfig from './OrderFieldsConfig';
+
+// Dynamic Icon Mapping for category customizer integration
+const ICON_COMPONENTS: Record<string, React.ComponentType<any>> = {
+  'User': User,
+  'Sparkles': Sparkles,
+  'CreditCard': CreditCard,
+  'SlidersHorizontal': SlidersHorizontal,
+  'Gift': Gift,
+  'ShoppingBag': ShoppingBag,
+  'Truck': Truck,
+  'Calendar': Calendar,
+  'MapPin': MapPin,
+  'Phone': Phone,
+  'Heart': Heart,
+  'Info': Info,
+  'Layers': Layers,
+  'Package': Package,
+  'Tag': Tag,
+  'DollarSign': DollarSign,
+  'MessageSquare': MessageSquare,
+  'Star': Star,
+  'Clock': Clock,
+  'Smile': Smile,
+  'FileText': FileText,
+  'Camera': Camera,
+  'Image': ImageIcon,
+  'Award': Award
+};
+
+const getCategoryColorClass = (catName: string, index: number): string => {
+  if (catName === 'Cliente') return 'text-indigo-400';
+  if (catName === 'Detalles') return 'text-pink-400';
+  if (catName === 'Logística') return 'text-purple-400';
+  if (catName === 'Otros') return 'text-violet-400';
+  const colors = ['text-cyan-400', 'text-amber-400', 'text-emerald-400', 'text-rose-400', 'text-sky-400', 'text-indigo-400'];
+  return colors[index % colors.length];
+};
 
 interface OrderListProps {
   orders: Order[];
   updateOrderStatus: (id: string, newStatus: OrderStatus) => void;
+  isFloristryEnabled?: boolean;
+  staff?: StaffMember[];
+  assignStaffToOrder?: (orderId: string, staffId: string) => Promise<void> | void;
+  activeModules?: string[];
+  onEditOrder?: (order: Order) => void;
 }
 
 // Spanish Date and Time formatting helpers
@@ -56,6 +120,53 @@ const formatSpanishDate = (dateStr?: string) => {
   return dateStr;
 };
 
+const getOrderCurrencySymbol = (order: Order) => {
+  const t = String(order.tasaDeCambioT || '').toLowerCase();
+  if (t.includes('eur') || t.includes('euro')) {
+    return '€';
+  }
+  return '$';
+};
+
+const formatDivisaValue = (val: number, order: Order) => {
+  const symbol = getOrderCurrencySymbol(order);
+  if (symbol === '€') {
+    return `€ ${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  } else {
+    const isInteger = val % 1 === 0;
+    return `$${val.toLocaleString('en-US', { minimumFractionDigits: isInteger ? 0 : 1, maximumFractionDigits: 2 })}`;
+  }
+};
+
+const formatSpanishDateWithWeekday = (dateStr?: string) => {
+  if (!dateStr) return '';
+  let date: Date | null = null;
+  const parts = dateStr.split('/');
+  if (parts.length >= 3) {
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const year = parseInt(parts[2], 10);
+    date = new Date(year, month, day);
+  } else {
+    const partsHyphen = dateStr.split('-');
+    if (partsHyphen.length === 3) {
+      const year = parseInt(partsHyphen[0], 10);
+      const month = parseInt(partsHyphen[1], 10) - 1;
+      const day = parseInt(partsHyphen[2], 10);
+      date = new Date(year, month, day);
+    } else {
+      date = new Date(dateStr);
+    }
+  }
+
+  if (date && !isNaN(date.getTime())) {
+    const weekdays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return `${weekdays[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`;
+  }
+  return dateStr;
+};
+
 const formatSpanishTime = (timeStr?: string) => {
   if (!timeStr) return '';
   const parts = timeStr.split(':');
@@ -65,7 +176,8 @@ const formatSpanishTime = (timeStr?: string) => {
     const ampm = hours >= 12 ? 'pm' : 'am';
     hours = hours % 12;
     hours = hours ? hours : 12; // '0' becomes '12'
-    return `${hours}:${minutes}${ampm}`;
+    const formattedHours = String(hours).padStart(2, '0');
+    return `${formattedHours}:${minutes} ${ampm}`;
   }
   return timeStr;
 };
@@ -88,21 +200,94 @@ const formatCustomRangeInput = (start: string, end: string) => {
   return `${s} - ${e}`;
 };
 
-export default function OrderList({ orders, updateOrderStatus }: OrderListProps) {
+const SPANISH_MONTHS = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+  'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
+
+export default function OrderList({ 
+  orders, 
+  updateOrderStatus, 
+  isFloristryEnabled = true,
+  staff = [],
+  assignStaffToOrder,
+  activeModules = [],
+  onEditOrder
+}: OrderListProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<OrderStatus[]>([]);
   const [deliveryTypeFilter, setDeliveryTypeFilter] = useState<'all' | 'delivery' | 'tienda'>('all');
   const [partialPayFilter, setPartialPayFilter] = useState<boolean>(false);
   const [sorpresaFilter, setSorpresaFilter] = useState<boolean>(false);
-  const [sortBy, setSortBy] = useState<string>('delivery_earliest');
+  const [sortBy, setSortBy] = useState<string>('delivery');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [showFilterSection, setShowFilterSection] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
-  const [dateRangeFilter, setDateRangeFilter] = useState<'all' | 'this_week' | 'this_month' | 'june' | 'july' | 'custom'>('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<string>('all');
+  const [showMonthDropdown, setShowMonthDropdown] = useState(false);
+  const [isImageExpanded, setIsImageExpanded] = useState(false);
   const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string } | null>(null);
   const [showCalendarPopover, setShowCalendarPopover] = useState(false);
   const [tempStartDate, setTempStartDate] = useState('');
   const [tempEndDate, setTempEndDate] = useState('');
+
+  // Fields and customizer states
+  const [showConfigPage, setShowConfigPage] = useState(false);
+  const [configFields, setConfigFields] = useState<OrderField[]>([]);
+  const [configCategories, setConfigCategories] = useState<string[]>([]);
+  const [categoryIcons, setCategoryIcons] = useState<Record<string, string>>({});
+  const [hiddenCategories, setHiddenCategories] = useState<Record<string, boolean>>({});
+  const [looseFieldsPosition, setLooseFieldsPosition] = useState<'top' | 'bottom'>('bottom');
+
+  useEffect(() => {
+    const updateFields = () => {
+      setConfigFields(loadOrderFields());
+      setConfigCategories(loadOrderCategories());
+      try {
+        const savedHidden = localStorage.getItem('zenit_orders_hidden_categories');
+        if (savedHidden) {
+          setHiddenCategories(JSON.parse(savedHidden));
+        } else {
+          setHiddenCategories({});
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      try {
+        const savedPos = localStorage.getItem('zenit_orders_loose_position');
+        if (savedPos === 'top' || savedPos === 'bottom') {
+          setLooseFieldsPosition(savedPos);
+        } else {
+          setLooseFieldsPosition('bottom');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      try {
+        const saved = localStorage.getItem('zenit_orders_category_icons');
+        if (saved) {
+          setCategoryIcons(JSON.parse(saved));
+        } else {
+          setCategoryIcons({
+            'Cliente': 'User',
+            'Detalles': 'Sparkles',
+            'Logística': 'CreditCard',
+            'Otros': 'SlidersHorizontal'
+          });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    updateFields();
+    window.addEventListener('zenit_orders_fields_updated', updateFields);
+    window.addEventListener('zenit_orders_categories_updated', updateFields);
+    return () => {
+      window.removeEventListener('zenit_orders_fields_updated', updateFields);
+      window.removeEventListener('zenit_orders_categories_updated', updateFields);
+    };
+  }, []);
 
   // Cancellation hold states
   const cancelTimerRef = useRef<any>(null);
@@ -110,6 +295,10 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
   const [cancelHoldProgress, setCancelHoldProgress] = useState(0);
   const [showCancelNotice, setShowCancelNotice] = useState(false);
   const isHoldingRef = useRef(false);
+
+  useEffect(() => {
+    setIsImageExpanded(false);
+  }, [selectedOrder?.id]);
 
   const formatPhoneVisual = (phoneStr?: string) => {
     if (!phoneStr) return 'Sin número';
@@ -130,6 +319,73 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
   const cleanPhoneToNumbers = (phoneStr?: string) => {
     if (!phoneStr) return '';
     return phoneStr.replace(/\D/g, '');
+  };
+
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+
+  const handleCopyOrderDetails = (order: Order) => {
+    const isSorpresa = !!order.entregaSorpresa;
+    
+    // 1. Persona a entregar: (si se trata de una entrega sorpresa, colocar nombre del receptor, si no, el del cliente)
+    const personaEntregar = isSorpresa 
+      ? (order.nombreReceptor || order.customer_name || order.nombreCliente || 'No especificado')
+      : (order.customer_name || order.nombreCliente || 'No especificado');
+
+    // 2. Teléfono: (el del cliente o receptor según el mismo criterio anterior)
+    const telefono = isSorpresa
+      ? (order.tlfReceptor || order.customer_phone || order.nroCliente || 'No especificado')
+      : (order.customer_phone || order.nroCliente || 'No especificado');
+
+    // 3. Dirección: (link de Maps)
+    const address = order.direccionEntrega || order.delivery_address || '';
+    const mapsLink = address?.startsWith('http') 
+      ? address 
+      : address 
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+        : 'No especificado';
+
+    // 4. Entrega sorpresa: SI/NO
+    const entregaSorpresaText = isSorpresa ? 'SI' : 'NO';
+
+    // 5. Dia de entrega:
+    const diaEntrega = formatSpanishDate(order.fechaEntrega) || 'No especificado';
+
+    // 6. Hora de entrega:
+    const horaEntrega = order.horaEntrega ? formatSpanishTime(order.horaEntrega) : 'No especificado';
+
+    const textToCopy = `- Persona a entregar: ${personaEntregar}
+- Teléfono: ${telefono}
+- Dirección: ${mapsLink}
+- Entrega sorpresa: ${entregaSorpresaText}
+- Dia de entrega: ${diaEntrega}
+- Hora de entrega: ${horaEntrega}`;
+
+    const performCopy = () => {
+      setCopiedOrderId(order.id);
+      setTimeout(() => setCopiedOrderId(null), 2000);
+    };
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(textToCopy)
+        .then(performCopy)
+        .catch(() => {
+          const el = document.createElement('textarea');
+          el.value = textToCopy;
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+          performCopy();
+        });
+    } else {
+      const el = document.createElement('textarea');
+      el.value = textToCopy;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      performCopy();
+    }
   };
 
   const formatFullDateTime = (dateStr?: string) => {
@@ -207,7 +463,7 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
   // Reset pagination when filter criteria changes
   useEffect(() => {
     setVisibleCount(15);
-  }, [searchTerm, selectedStatuses, deliveryTypeFilter, partialPayFilter, sorpresaFilter, sortBy, dateRangeFilter, customDateRange]);
+  }, [searchTerm, selectedStatuses, deliveryTypeFilter, partialPayFilter, sorpresaFilter, sortBy, sortOrder, dateRangeFilter, customDateRange]);
 
   // Color mappings
   const STATUS_BADGES = {
@@ -294,6 +550,9 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
         } else if (dateRangeFilter === 'july') {
           // July 2026 (July is index 6)
           matchesDateRange = orderDate.getMonth() === 6 && orderDate.getFullYear() === 2026;
+        } else if (dateRangeFilter.startsWith('month_')) {
+          const monthIdx = parseInt(dateRangeFilter.split('_')[1], 10);
+          matchesDateRange = orderDate.getMonth() === monthIdx && orderDate.getFullYear() === 2026;
         } else if (dateRangeFilter === 'custom' && customDateRange) {
           const startDate = new Date(`${customDateRange.start}T00:00:00`);
           const endDate = new Date(`${customDateRange.end}T23:59:59`);
@@ -334,35 +593,33 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
       const dateA = parseDeliveryDate(a);
       const dateB = parseDeliveryDate(b);
 
-      if (sortBy === 'delivery_earliest') {
-        if (!isFinishedA) {
-          return dateA - dateB; // Active ascending
+      if (sortBy === 'delivery') {
+        if (sortOrder === 'asc') {
+          if (!isFinishedA) {
+            return dateA - dateB; // Active ascending
+          } else {
+            return dateB - dateA; // Finished descending
+          }
         } else {
-          return dateB - dateA; // Finished descending
+          return dateB - dateA; // Descending
         }
       }
 
-      if (sortBy === 'delivery_latest') {
-        return dateB - dateA;
+      if (sortBy === 'created') {
+        const valA = new Date(a.created_at).getTime();
+        const valB = new Date(b.created_at).getTime();
+        return sortOrder === 'desc' ? valB - valA : valA - valB;
       }
-      
-      if (sortBy === 'created_newest') {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+
+      if (sortBy === 'price') {
+        return sortOrder === 'desc' ? b.total_price - a.total_price : a.total_price - b.total_price;
       }
-      if (sortBy === 'created_oldest') {
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-      }
-      if (sortBy === 'price_highest') {
-        return b.total_price - a.total_price;
-      }
-      if (sortBy === 'price_lowest') {
-        return a.total_price - b.total_price;
-      }
+
       return 0;
     });
 
     return result;
-  }, [orders, searchTerm, selectedStatuses, deliveryTypeFilter, partialPayFilter, sorpresaFilter, sortBy, dateRangeFilter, customDateRange]);
+  }, [orders, searchTerm, selectedStatuses, deliveryTypeFilter, partialPayFilter, sorpresaFilter, sortBy, sortOrder, dateRangeFilter, customDateRange]);
 
   // Handle intersection for infinite scrolling
   useEffect(() => {
@@ -417,169 +674,91 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
       setSelectedOrder(prev => prev ? { ...prev, status: newStatus, updated_at: new Date().toISOString() } : null);
     }
   };
-  // Master renderer for Order Detail Content (enhanced design for desktop side panel & tablet/mobile popups)
-  const renderOrderDetailContent = (order: Order) => {
-    const statusInfo = STATUS_BADGES[order.status];
-    const fallbackImage = "https://images.unsplash.com/photo-1561181286-d3fee7d55364?auto=format&fit=crop&q=80&w=600";
+
+  const getNonEmptyCategoryFields = (category: string, order: Order) => {
+    return configFields.filter(f => {
+      if (f.key === 'total_price') return false;
+
+      const isInCategory = (category === 'Sin categoría' || category === '') 
+        ? (!f.category || f.category === 'Sin categoría') 
+        : f.category === category;
+
+      if (!isInCategory || !f.showInDetails || !f.visible) return false;
+
+      const val = order[f.key as keyof Order] ?? (order.custom_fields && (order.custom_fields as any)[f.key]);
+      return val !== undefined && val !== null && val !== '';
+    });
+  };
+
+  const renderCategoryFields = (category: string, order: Order) => {
+    const catFields = getNonEmptyCategoryFields(category, order);
+    if (catFields.length === 0) return null;
 
     return (
-      <div className="flex flex-col text-slate-100 pb-10">
-        {/* Top Header Image & Vignette */}
-        <div className="relative h-48 sm:h-64 w-full overflow-hidden bg-slate-900 shrink-0">
-          <img 
-            src={order.imageRef || fallbackImage} 
-            alt="Referencia de Pedido" 
-            className="w-full h-full object-cover select-none"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/45 to-transparent" />
-          <div className="absolute bottom-3 left-4 right-4 sm:bottom-4 sm:left-5 sm:right-5">
-            <div className="flex flex-wrap gap-1.5 items-center">
-              <CopyableText text={order.id}>
-                <span className="bg-indigo-500/20 text-indigo-300 backdrop-blur-md border border-indigo-500/30 px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-mono font-bold uppercase tracking-widest block">
-                  Orden #{order.id.split('-')[1] || order.id.substring(0, 4)}
-                </span>
-              </CopyableText>
-              
-              {order.priority === 'critical' && (
-                <span className="bg-rose-500/20 text-rose-300 backdrop-blur-md border border-rose-500/30 px-2 py-0.5 rounded-md text-[9px] sm:text-[10px] font-mono font-bold uppercase tracking-widest">
-                  CRÍTICO
-                </span>
-              )}
-            </div>
-            <CopyableText text={order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}>
-              <h3 className="font-sans font-black text-lg sm:text-2xl text-white mt-1.5 drop-shadow-md leading-tight">
-                {order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}
-              </h3>
-            </CopyableText>
-          </div>
-        </div>
+      <div className="space-y-1 text-xs sm:text-sm">
+        {catFields.map(field => {
+          const val = order[field.key as keyof Order] ?? (order.custom_fields && (order.custom_fields as any)[field.key]);
+          if (val === undefined || val === null || val === '') return null;
 
-        {/* Action Bar / Status Dropdown */}
-        <div className="px-4 py-3 sm:px-5 sm:py-4 bg-slate-950 border-b border-slate-900/60 flex items-center justify-between gap-3">
-          <div className="relative">
-            <button
-              onClick={() => setStatusMenuOpen(!statusMenuOpen)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold border cursor-pointer transition-all flex items-center gap-1.5 shadow-sm ${statusInfo.bg}`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-              <span>{statusInfo.label}</span>
-              <span className="text-[8px] opacity-75">▼</span>
-            </button>
-            {statusMenuOpen && (
-              <div className="absolute left-0 mt-2 w-48 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl z-30 py-1.5 overflow-hidden">
-                {(Object.keys(STATUS_BADGES) as OrderStatus[]).map((st) => {
-                  const badge = STATUS_BADGES[st];
-                  return (
-                    <button
-                      key={st}
-                      onClick={() => {
-                        handleStatusChange(order.id, st);
-                        setStatusMenuOpen(false);
-                      }}
-                      className={`w-full text-left px-4 py-2.5 text-xs transition-colors hover:bg-slate-850 flex items-center gap-2.5 ${
-                        order.status === st ? 'text-white font-bold bg-slate-850/80' : 'text-slate-400'
-                      }`}
-                    >
-                      <span className={`w-2 h-2 rounded-full border ${badge.bg.split(' ')[0]}`} />
-                      <span>{badge.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Main Details Body */}
-        <div className="px-4 py-4 sm:px-5 sm:py-6 space-y-5 sm:space-y-6">
-          {/* 1. Información del Cliente */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-[10px] sm:text-xs font-sans font-bold text-indigo-400 uppercase tracking-wider pb-1.5 border-b border-slate-900">
-              <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span>Información del Cliente</span>
-            </div>
-            
-            <div className="space-y-2 text-xs sm:text-sm">
-              <div className="flex justify-between items-baseline gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Nombre Cliente:</span>
-                <CopyableText text={order.customer_name} className="min-w-0">
-                  <span className="font-bold text-slate-100 text-right block truncate">{order.customer_name}</span>
-                </CopyableText>
-              </div>
-              
-              <div className="flex justify-between items-center gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Teléfono:</span>
+          if (field.key === 'customer_phone' || field.key === 'tlfReceptor') {
+            return (
+              <div key={field.key} className="flex justify-between items-center gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
                 <div className="flex items-center gap-2">
-                  {(order.customer_phone || order.nroCliente) && (
-                    <a
-                      href={`tel:${cleanPhoneToNumbers(order.customer_phone || order.nroCliente)}`}
-                      className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:text-white transition-all flex items-center justify-center cursor-pointer shrink-0"
-                      title="Llamar"
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                    </a>
-                  )}
-                  <CopyableText text={cleanPhoneToNumbers(order.customer_phone || order.nroCliente)}>
+                  <a
+                    href={`tel:${cleanPhoneToNumbers(String(val))}`}
+                    className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:text-white transition-all flex items-center justify-center cursor-pointer shrink-0"
+                    title="Llamar"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                  </a>
+                  <CopyableText text={cleanPhoneToNumbers(String(val))}>
                     <span className="font-bold text-slate-200">
-                      {formatPhoneVisual(order.customer_phone || order.nroCliente)}
+                      {formatPhoneVisual(String(val))}
                     </span>
                   </CopyableText>
                 </div>
               </div>
+            );
+          }
 
-              {order.generoCliente && (
-                <div className="flex justify-between items-center gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Género:</span>
-                  {order.generoCliente.toUpperCase().startsWith('H') ? (
-                    <span className="w-5 h-5 rounded-full bg-blue-950/40 text-blue-400 border border-blue-500/20 flex items-center justify-center font-extrabold text-[10px] sm:text-xs">
-                      H
-                    </span>
-                  ) : (
-                    <span className="w-5 h-5 rounded-full bg-pink-950/40 text-pink-400 border border-pink-500/20 flex items-center justify-center font-extrabold text-[10px] sm:text-xs">
-                      M
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 2. Detalles del Pedido */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-[10px] sm:text-xs font-sans font-bold text-pink-400 uppercase tracking-wider pb-1.5 border-b border-slate-900">
-              <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span>Detalles del Pedido</span>
-            </div>
-            
-            <div className="space-y-2 text-xs sm:text-sm">
-              <div className="flex justify-between items-baseline gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Pedido:</span>
-                <CopyableText text={order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'} className="min-w-0">
-                  <span className="font-bold text-slate-100 text-right block truncate">
-                    {order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}
-                  </span>
+          if (field.key === 'dedicatoria') {
+            return (
+              <div key={field.key} className="py-0.5">
+                <span className="text-slate-500 text-xs block mb-1">{field.label}:</span>
+                <CopyableText text={String(val)}>
+                  <div className="p-2.5 sm:p-3 rounded-xl border border-indigo-500/10 bg-indigo-950/5 relative overflow-hidden">
+                    <p className="text-xs italic text-indigo-100/90 leading-relaxed font-sans">
+                      "{val}"
+                    </p>
+                  </div>
                 </CopyableText>
               </div>
+            );
+          }
 
-              <div className="flex justify-between items-baseline gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Fecha Entrega:</span>
-                <span className="font-bold text-amber-400 text-right">
-                  {formatSpanishDate(order.fechaEntrega) || 'No especificada'}
-                </span>
+          if (field.key === 'direccionEntrega' || field.key === 'delivery_address') {
+            return (
+              <div key={field.key} className="flex justify-between items-center gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
+                <a 
+                   href={String(val).startsWith('http') ? String(val) : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(val))}`}
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 rounded-full bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-[10px] font-semibold flex items-center gap-1 hover:bg-indigo-600/30 transition-all cursor-pointer shrink-0"
+                >
+                  <MapPin className="h-3 w-3" />
+                  <span>Abrir en Maps</span>
+                </a>
               </div>
+            );
+          }
 
-              <div className="flex justify-between items-baseline gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Hora Entrega:</span>
-                <span className="font-bold text-amber-400 text-right">
-                  {formatSpanishTime(order.horaEntrega) || 'No especificada'}
-                </span>
-              </div>
-
-              {/* Delivery type row */}
-              <div className="flex justify-between items-center gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Tipo de Entrega:</span>
-                {order.entregaTienda ? (
+          if (field.key === 'entregaTienda') {
+            return (
+              <div key={field.key} className="flex justify-between items-center gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
+                {val === true || val === 'true' ? (
                   <span className="bg-sky-500/10 text-sky-400 border border-sky-500/20 px-2.5 py-1 rounded-xl text-[10px] font-bold flex items-center gap-1">
                     🏬 Retiro en Tienda
                   </span>
@@ -589,11 +768,14 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                   </span>
                 )}
               </div>
+            );
+          }
 
-              {/* Surprise delivery row */}
-              <div className="flex justify-between items-center gap-4">
-                <span className="text-slate-500 text-xs shrink-0">¿Es Sorpresa?:</span>
-                {order.entregaSorpresa ? (
+          if (field.key === 'entregaSorpresa') {
+            return (
+              <div key={field.key} className="flex justify-between items-center gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
+                {val === true || val === 'true' ? (
                   <span className="bg-rose-500/15 text-rose-400 border border-rose-500/35 px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 animate-pulse">
                     🎁 ¡Es Sorpresa!
                   </span>
@@ -603,166 +785,311 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                   </span>
                 )}
               </div>
+            );
+          }
 
-              {order.numeroRosas !== undefined && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Número de Rosas:</span>
-                  <span className="font-bold text-rose-300">{order.numeroRosas}</span>
-                </div>
-              )}
-
-              {order.colorRosas && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Color de Rosas:</span>
-                  <CopyableText text={order.colorRosas}>
-                    <span className="font-bold text-slate-200">{order.colorRosas}</span>
-                  </CopyableText>
-                </div>
-              )}
-
-              {order.personalizacion && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Personalización:</span>
-                  <CopyableText text={order.personalizacion} className="min-w-0">
-                    <span className="font-medium text-slate-300 text-right block truncate">{order.personalizacion}</span>
-                  </CopyableText>
-                </div>
-              )}
-
-              {order.nombreReceptor && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Receptor:</span>
-                  <CopyableText text={order.nombreReceptor} className="min-w-0">
-                    <span className="font-bold text-slate-200 text-right block truncate">{order.nombreReceptor}</span>
-                  </CopyableText>
-                </div>
-              )}
-
-              {order.tlfReceptor && (
-                <div className="flex justify-between items-center gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Teléfono Receptor:</span>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={`tel:${cleanPhoneToNumbers(order.tlfReceptor)}`}
-                      className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:text-white transition-all flex items-center justify-center cursor-pointer shrink-0"
-                      title="Llamar"
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                    </a>
-                    <CopyableText text={cleanPhoneToNumbers(order.tlfReceptor)}>
-                      <span className="text-slate-200 font-bold">{formatPhoneVisual(order.tlfReceptor)}</span>
-                    </CopyableText>
-                  </div>
-                </div>
-              )}
-
-              {order.dedicatoria && (
-                <div className="pt-1.5">
-                  <span className="text-slate-500 text-xs block mb-1">Dedicatoria:</span>
-                  <CopyableText text={order.dedicatoria}>
-                    <div className="p-3 sm:p-4 rounded-xl border border-indigo-500/10 bg-indigo-950/5 relative overflow-hidden">
-                      <p className="text-xs italic text-indigo-100/90 leading-relaxed font-sans">
-                        "{order.dedicatoria}"
-                      </p>
-                    </div>
-                  </CopyableText>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 3. Logística y Pago */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-[10px] sm:text-xs font-sans font-bold text-purple-400 uppercase tracking-wider pb-1.5 border-b border-slate-900">
-              <CreditCard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span>Logística y Pago</span>
-            </div>
-            
-            <div className="space-y-2 text-xs sm:text-sm">
-              <div className="flex justify-between items-center gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Dirección:</span>
-                <a 
-                  href={order.direccionEntrega?.startsWith('http') ? order.direccionEntrega : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.direccionEntrega || order.delivery_address || '')}`}
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="px-3 py-1 rounded-full bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-[10px] font-semibold flex items-center gap-1 hover:bg-indigo-600/30 transition-all cursor-pointer shrink-0"
-                >
-                  <MapPin className="h-3 w-3" />
-                  <span>Abrir en Maps</span>
-                </a>
-              </div>
-
-              {order.notaEntrega || order.notes ? (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Nota de Entrega:</span>
-                  <CopyableText text={order.notaEntrega || order.notes || ''} className="min-w-0">
-                    <span className="font-bold text-slate-300 text-right block truncate">
-                      {order.notaEntrega || order.notes}
+          if (field.key === 'precioFacturado') {
+            const rate = Number(order.tasaDeCambioV || 451.88);
+            const showBs = String(order.metodoPago || '').toLowerCase().trim().includes('móvil') || String(order.metodoPago || '').toLowerCase().trim().includes('movil');
+            const formattedUsd = formatDivisaValue(Number(val), order);
+            const formattedBs = `Bs. ${(Number(val) * rate).toLocaleString('es-VE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`;
+            return (
+              <div key={field.key} className="flex justify-between items-start gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0 mt-0.5">Precio Facturado:</span>
+                <div className="text-right flex flex-col items-end gap-1">
+                  <CopyableText text={formattedUsd}>
+                    <span className="font-bold text-slate-200 block text-xs sm:text-sm">
+                      {formattedUsd}
                     </span>
                   </CopyableText>
-                </div>
-              ) : null}
-
-              {order.precioFacturado !== undefined && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Precio Facturado:</span>
-                  <span className="text-slate-300 font-bold">
-                    {order.tasaDeCambioT === 'EUR' ? '€' : '$'} {order.precioFacturado || order.total_price}
-                  </span>
-                </div>
-              )}
-
-              {order.deliveryFacturado !== undefined && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Delivery cobrado:</span>
-                  <span className="text-slate-300 font-bold">
-                    {order.tasaDeCambioT === 'EUR' ? '€' : '$'} {order.deliveryFacturado}
-                  </span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-baseline gap-4">
-                <span className="text-slate-500 text-xs shrink-0">Método de Pago:</span>
-                <span className="font-bold text-slate-300 text-right">{order.metodoPago || 'No especificado'}</span>
-              </div>
-
-              {order.partialPay && (
-                <div className="flex justify-between items-center gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Estado de Pago:</span>
-                  <span className="bg-teal-500/15 border border-teal-500/20 text-teal-400 text-[10px] font-extrabold px-2 py-0.5 rounded-lg animate-pulse">
-                    PAGO PARCIAL / SEÑADO
-                  </span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-start gap-4 border-t border-slate-900/65 pt-2 mt-2">
-                <span className="text-slate-500 text-xs shrink-0">Ingreso total:</span>
-                <div className="flex flex-col items-end">
-                  <CopyableText text={`${order.tasaDeCambioT === 'EUR' ? '€' : '$'} ${order.total_price}`}>
-                    <span className="font-black text-slate-100 text-sm sm:text-base">
-                      {order.tasaDeCambioT === 'EUR' ? '€' : '$'} {order.total_price}
-                    </span>
-                  </CopyableText>
-                  {order.tasaDeCambioV && (
-                    <CopyableText text={`Bs. ${(order.total_price * order.tasaDeCambioV).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}>
-                      <span className="text-[10px] sm:text-xs text-slate-400 mt-0.5 font-bold">
-                        Bs. {(order.total_price * order.tasaDeCambioV).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {showBs && (
+                    <CopyableText text={formattedBs}>
+                      <span className="font-bold text-slate-200 block text-xs sm:text-sm">
+                        {formattedBs}
                       </span>
                     </CopyableText>
                   )}
                 </div>
               </div>
+            );
+          }
 
-              {order.tasaDeCambioV && (
-                <div className="flex justify-between items-baseline gap-4">
-                  <span className="text-slate-500 text-xs shrink-0">Tasa de Cambio:</span>
-                  <span className="text-slate-300 text-right font-bold">
-                    Bs. {order.tasaDeCambioV} | {order.tasaDeCambioT || 'EUR'}
+          if (field.key === 'deliveryFacturado') {
+            const formattedUsd = formatDivisaValue(Number(val), order);
+            return (
+              <div key={field.key} className="flex justify-between items-baseline gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">Delivery cobrado:</span>
+                <CopyableText text={formattedUsd}>
+                  <span className="font-bold text-slate-200 text-right block truncate text-xs sm:text-sm">
+                    {formattedUsd}
                   </span>
+                </CopyableText>
+              </div>
+            );
+          }
+
+          if (field.key === 'partialPay') {
+            if (val !== true && val !== 'true') return null;
+
+            const basePrice = Number(order.precioFacturado || order.total_price || 0);
+            const deliveryFee = Number(order.deliveryFacturado || 0);
+            const rate = Number(order.tasaDeCambioV || 451.88);
+
+            const ingresoTotalTienda = basePrice + deliveryFee;
+            const pagoPendienteCliente = ingresoTotalTienda / 2;
+            const showBs = String(order.metodoPago || '').toLowerCase().trim().includes('móvil') || String(order.metodoPago || '').toLowerCase().trim().includes('movil');
+            const formattedUsd = formatDivisaValue(pagoPendienteCliente, order);
+            const formattedBs = `Bs. ${(pagoPendienteCliente * rate).toLocaleString('es-VE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`;
+
+            return (
+              <React.Fragment key={field.key}>
+                {/* Row 1: Pago sólo 50% */}
+                <div className="flex justify-between items-center gap-4 py-0.5">
+                  <span className="text-slate-500 text-xs shrink-0">Pago sólo 50%:</span>
+                  <span className="bg-violet-600 text-white text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1 shrink-0">
+                    <Check className="h-3 w-3" /> Sí
+                  </span>
+                </div>
+
+                {/* Row 2: Pago pendiente de cliente */}
+                <div className="flex justify-between items-start gap-4 py-1 border-t border-slate-900/40 mt-1">
+                  <span className="text-slate-500 text-xs shrink-0 mt-0.5">Pago pendiente de cliente:</span>
+                  <div className="text-right flex flex-col items-end gap-1">
+                    <CopyableText text={formattedUsd}>
+                      <span className="font-bold text-slate-200 block text-xs sm:text-sm">
+                        {formattedUsd}
+                      </span>
+                    </CopyableText>
+                    {showBs && (
+                      <CopyableText text={formattedBs}>
+                        <span className="font-bold text-slate-200 block text-xs sm:text-sm">
+                          {formattedBs}
+                        </span>
+                      </CopyableText>
+                    )}
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          }
+
+          if (field.key === 'metodoPago') {
+            return (
+              <div key={field.key} className="flex justify-between items-baseline gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">Método de Pago:</span>
+                <span className="font-bold text-slate-200 text-right block truncate">
+                  {String(val)}
+                </span>
+              </div>
+            );
+          }
+
+          if (field.key === 'tasaDeCambioV') {
+            return (
+              <div key={field.key} className="flex justify-between items-baseline gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">Tasa de Cambio:</span>
+                <span className="font-bold text-slate-200 text-right block truncate">
+                  Bs. {Number(val).toFixed(2)} | {order.tasaDeCambioT || 'Personalizada'}
+                </span>
+              </div>
+            );
+          }
+
+          if (field.key === 'generoCliente') {
+            const gen = String(val).toUpperCase();
+            return (
+              <div key={field.key} className="flex justify-between items-center gap-4 py-0.5">
+                <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
+                {gen.startsWith('H') ? (
+                  <span className="w-5 h-5 rounded-full bg-blue-950/40 text-blue-400 border border-blue-500/20 flex items-center justify-center font-extrabold text-[10px] sm:text-xs">H</span>
+                ) : gen.startsWith('M') ? (
+                  <span className="w-5 h-5 rounded-full bg-pink-950/40 text-pink-400 border border-pink-500/20 flex items-center justify-center font-extrabold text-[10px] sm:text-xs">M</span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-[10px]">{val}</span>
+                )}
+              </div>
+            );
+          }
+
+          // Default representation for normal text/number/dropdown values
+          let displayVal = String(val);
+          if (field.type === 'boolean') {
+            displayVal = val === true || val === 'true' ? 'Sí' : 'No';
+          } else if (field.type === 'date' || field.key === 'fechaEntrega') {
+            displayVal = formatSpanishDateWithWeekday(displayVal);
+          } else if (field.type === 'time' || field.key === 'horaEntrega') {
+            displayVal = formatSpanishTime(displayVal);
+          }
+
+          return (
+            <div key={field.key} className="flex justify-between items-baseline gap-4 py-0.5">
+              <span className="text-slate-500 text-xs shrink-0">{field.label}:</span>
+              <CopyableText text={displayVal} className="min-w-0">
+                <span className="font-bold text-slate-200 text-right block truncate">{displayVal}</span>
+              </CopyableText>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Master renderer for Order Detail Content (enhanced design for desktop side panel & tablet/mobile popups)
+  const renderOrderDetailContent = (order: Order) => {
+    const statusInfo = STATUS_BADGES[order.status];
+    const fallbackImage = "https://images.unsplash.com/photo-1561181286-d3fee7d55364?auto=format&fit=crop&q=80&w=600";
+
+    return (
+      <div className="flex flex-col text-slate-100">
+        {/* Top Header Image & Vignette */}
+        <div 
+          onClick={() => setIsImageExpanded(!isImageExpanded)}
+          className={`relative w-full overflow-hidden bg-slate-950 shrink-0 transition-all duration-300 cursor-pointer ${
+            isImageExpanded ? 'h-80 sm:h-[450px]' : 'h-48 sm:h-64'
+          }`}
+        >
+          <img 
+            src={order.imageRef || fallbackImage} 
+            alt="Referencia de Pedido" 
+            className={`w-full h-full select-none transition-all duration-300 object-cover ${
+              isImageExpanded ? '' : 'hover:scale-105'
+            }`}
+            referrerPolicy="no-referrer"
+            title={isImageExpanded ? "Toca para contraer imagen" : "Toca para ampliar imagen"}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/45 to-transparent pointer-events-none" />
+          
+          {/* FLOATING ORDER ID & PRIORITY in top-left corner of the box */}
+          <div className="absolute top-4 left-4 z-40 flex flex-wrap gap-1.5 items-center" onClick={(e) => e.stopPropagation()}>
+            <CopyableText text={order.id}>
+              <span className="bg-slate-900/80 text-slate-300 backdrop-blur-md border border-slate-800/80 px-2.5 py-1.5 rounded-xl text-[9px] sm:text-[10px] font-mono font-bold uppercase tracking-widest block">
+                #{order.id.split('-')[1] || order.id.substring(0, 4)}
+              </span>
+            </CopyableText>
+            
+            {order.priority === 'critical' && (
+              <span className="bg-rose-500/20 text-rose-300 backdrop-blur-md border border-rose-500/30 px-2.5 py-1.5 rounded-xl text-[9px] sm:text-[10px] font-mono font-bold uppercase tracking-widest">
+                CRÍTICO
+              </span>
+            )}
+          </div>
+
+          <div className="absolute bottom-3 left-4 right-4 sm:bottom-4 sm:left-5 sm:right-5" onClick={(e) => e.stopPropagation()}>
+            {/* FLOATING STATUS DROPDOWN rendered above the title */}
+            <div className="relative inline-block mb-2 z-40">
+              <button
+                onClick={() => setStatusMenuOpen(!statusMenuOpen)}
+                className={`px-3 py-1.5 rounded-xl text-[10px] sm:text-xs font-bold border cursor-pointer transition-all flex items-center gap-1.5 shadow-lg backdrop-blur-md bg-slate-950/80 hover:bg-slate-900/90 ${statusInfo.bg}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                <span>{statusInfo.label}</span>
+                <span className="text-[8px] opacity-75">▼</span>
+              </button>
+              {statusMenuOpen && (
+                <div className="absolute left-0 bottom-full mb-2 w-48 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl z-[99] py-1.5 overflow-hidden">
+                  {(Object.keys(STATUS_BADGES) as OrderStatus[]).map((st) => {
+                    const badge = STATUS_BADGES[st];
+                    return (
+                      <button
+                        key={st}
+                        onClick={() => {
+                          handleStatusChange(order.id, st);
+                          setStatusMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2.5 text-xs transition-colors hover:bg-slate-850 flex items-center gap-2.5 ${
+                          order.status === st ? 'text-white font-bold bg-slate-850/80' : 'text-slate-400'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full border ${badge.bg.split(' ')[0]}`} />
+                        <span>{badge.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
+
+            <CopyableText text={order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}>
+              <h3 className="font-sans font-black text-lg sm:text-2xl text-white mt-1 drop-shadow-md leading-tight">
+                {order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}
+              </h3>
+            </CopyableText>
           </div>
+        </div>
+
+        {/* Main Details Body */}
+        <div className="px-4 py-4 sm:px-5 sm:py-6 space-y-5 sm:space-y-6">
+          {/* Loose Fields at the TOP if selected */}
+          {looseFieldsPosition === 'top' && getNonEmptyCategoryFields('Sin categoría', order).length > 0 && (
+            <div className="space-y-3">
+              {renderCategoryFields('Sin categoría', order)}
+            </div>
+          )}
+
+          {configCategories.map((catName, idx) => {
+            // Skip hidden categories
+            if (hiddenCategories[catName]) return null;
+
+            // Check if there are visible and NON-EMPTY fields in details for this category
+            const hasFields = getNonEmptyCategoryFields(catName, order).length > 0;
+            if (!hasFields) return null;
+
+            const IconComponent = ICON_COMPONENTS[categoryIcons[catName]] || SlidersHorizontal;
+            const colorClass = getCategoryColorClass(catName, idx);
+
+            return (
+              <div key={catName} className="space-y-3">
+                <div className={`flex items-center gap-2 text-[10px] sm:text-xs font-sans font-bold ${colorClass} uppercase tracking-wider pb-1.5 border-b border-slate-900`}>
+                  <IconComponent className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                  <span>{catName}</span>
+                </div>
+                {renderCategoryFields(catName, order)}
+              </div>
+            );
+          })}
+
+          {/* Loose Fields at the BOTTOM if selected */}
+          {looseFieldsPosition === 'bottom' && getNonEmptyCategoryFields('Sin categoría', order).length > 0 && (
+            <div className="space-y-3">
+              {renderCategoryFields('Sin categoría', order)}
+            </div>
+          )}
+
+          {activeModules.includes('admin-module') && (
+            <div className={looseFieldsPosition === 'top' ? 'pt-1' : 'border-t border-slate-900 pt-3'}>
+              <div className="flex justify-between items-center gap-4">
+                <span className="text-slate-500 text-xs shrink-0 flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-violet-400" /> Asignado a:
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {order.asignadoA ? (
+                    <span className="text-xs font-semibold text-slate-200 bg-violet-950/40 border border-violet-800/30 px-2 py-0.5 rounded-lg">
+                      {order.asignadoA}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500 italic">No asignado</span>
+                  )}
+                  
+                  {order.status !== 'delivered' && order.status !== 'cancelled' && staff && staff.length > 0 && (
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value && assignStaffToOrder) {
+                          assignStaffToOrder(order.id, e.target.value);
+                        }
+                      }}
+                      defaultValue=""
+                      className="text-[11px] bg-slate-900 border border-slate-800 rounded-lg py-1 px-1.5 outline-none text-slate-300 hover:border-violet-500/50 transition-all focus:border-violet-500 cursor-pointer"
+                    >
+                      <option value="" disabled>Asignar...</option>
+                      {staff.map(s => (
+                        <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer Log */}
@@ -770,83 +1097,119 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
           <span>Recibido: {formatFullDateTime(order.created_at)}</span>
           <span>Modificado: {formatFullDateTime(order.updated_at)}</span>
         </div>
-
-        {/* State mutation buttons */}
-        <div className="px-4 py-3 sm:px-5 sm:py-4 border-t border-slate-900 bg-slate-950 flex flex-col gap-2 shrink-0">
-          {order.status !== 'delivered' && order.status !== 'cancelled' && (
-            <div className="flex gap-2.5 items-center relative w-full">
-              {/* Primary Next-Status Action Button */}
-              <button
-                onClick={() => handleNextStatus(order)}
-                className={`flex-1 h-11 sm:h-12 px-4 rounded-xl font-semibold text-xs tracking-wide uppercase transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md ${
-                  order.status === 'pending'
-                    ? 'bg-slate-950 border border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-white hover:border-amber-500'
-                    : order.status === 'preparing'
-                    ? 'bg-slate-950 border border-blue-500/30 text-blue-400 hover:bg-blue-500 hover:text-white hover:border-blue-500'
-                    : 'bg-slate-950 border border-purple-500/30 text-purple-400 hover:bg-purple-500 hover:text-white hover:border-purple-500'
-                }`}
-              >
-                {order.status === 'pending' && (
-                  <>
-                    <Play className="h-4 w-4 fill-current text-amber-400 hover:text-inherit" />
-                    <span>Comenzar Preparación</span>
-                  </>
-                )}
-                {order.status === 'preparing' && (
-                  <>
-                    <Truck className="h-4 w-4 text-blue-400 hover:text-inherit" />
-                    <span>Despachar Orden</span>
-                  </>
-                )}
-                {order.status === 'shipped' && (
-                  <>
-                    <PackageCheck className="h-4 w-4 text-purple-400 hover:text-inherit" />
-                    <span>Confirmar Entrega</span>
-                  </>
-                )}
-              </button>
-
-              {/* Solid Background Cancel Button without label */}
-              <div className="relative shrink-0">
-                <button
-                  onMouseDown={(e) => startCancelHold(e, order)}
-                  onMouseUp={endCancelHold}
-                  onMouseLeave={endCancelHold}
-                  onTouchStart={(e) => startCancelHold(e, order)}
-                  onTouchEnd={endCancelHold}
-                  onTouchCancel={endCancelHold}
-                  className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer transition-all active:scale-95 shadow-md shadow-rose-600/10"
-                  title="Mantén presionado para cancelar"
-                >
-                  <XCircle className="h-5 w-5" />
-                </button>
-
-                {showCancelNotice && (
-                  <div className="absolute bottom-14 right-0 bg-rose-600 text-white text-[10px] sm:text-[11px] font-bold px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none whitespace-nowrap animate-bounce z-50 border border-rose-500">
-                    ⚠️ Mantén presionado para cancelar la orden
-                  </div>
-                )}
-                {cancelHoldProgress > 0 && (
-                  <div className="absolute bottom-14 right-0 bg-slate-900 border border-rose-500 text-white text-[10px] sm:text-[11px] font-bold px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none whitespace-nowrap z-50 flex flex-col items-center gap-1">
-                    <span>Cancelando... {Math.round(cancelHoldProgress)}%</span>
-                    <div className="w-24 h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                      <div className="h-full bg-rose-500 transition-all duration-100" style={{ width: `${cancelHoldProgress}%` }} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {(order.status === 'delivered' || order.status === 'cancelled') && (
-            <div className="w-full text-center py-2 px-3 rounded-xl border border-slate-900 bg-slate-900/10 text-[10px] sm:text-xs text-slate-500 font-sans">
-              Esta orden se encuentra en estado histórico ({order.status === 'delivered' ? 'ENTREGADA' : 'CANCELADA'}) y no admite nuevas mutaciones.
-            </div>
-          )}
-        </div>
       </div>
     );
   };
+
+  // State mutation actions rendered strictly at the bottom of the page
+  const renderOrderActions = (order: Order) => {
+    return (
+      <div className="mt-4 p-4 rounded-2xl bg-slate-950 border border-slate-900 shadow-xl flex flex-col gap-2 shrink-0">
+        {order.status !== 'delivered' && order.status !== 'cancelled' && (
+          <div className="flex gap-2.5 items-center relative w-full">
+            {/* Primary Next-Status Action Button */}
+            <button
+              onClick={() => handleNextStatus(order)}
+              className={`flex-1 h-11 sm:h-12 px-4 rounded-xl font-semibold text-xs tracking-wide uppercase transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md ${
+                order.status === 'pending'
+                  ? 'bg-slate-950 border border-amber-500/30 text-amber-400 hover:bg-amber-500 hover:text-white hover:border-amber-500'
+                  : order.status === 'preparing'
+                  ? 'bg-slate-950 border border-blue-500/30 text-blue-400 hover:bg-blue-500 hover:text-white hover:border-blue-500'
+                  : 'bg-slate-950 border border-purple-500/30 text-purple-400 hover:bg-purple-500 hover:text-white hover:border-purple-500'
+              }`}
+            >
+              {order.status === 'pending' && (
+                <>
+                  <Play className="h-4 w-4 fill-current text-amber-400 hover:text-inherit" />
+                  <span>Comenzar Preparación</span>
+                </>
+              )}
+              {order.status === 'preparing' && (
+                <>
+                  <Truck className="h-4 w-4 text-blue-400 hover:text-inherit" />
+                  <span>Despachar Orden</span>
+                </>
+              )}
+              {order.status === 'shipped' && (
+                <>
+                  <PackageCheck className="h-4 w-4 text-purple-400 hover:text-inherit" />
+                  <span>Confirmar Entrega</span>
+                </>
+              )}
+            </button>
+
+            {/* Solid Background Cancel Button without label */}
+            <div className="relative shrink-0">
+              <button
+                onMouseDown={(e) => startCancelHold(e, order)}
+                onMouseUp={endCancelHold}
+                onMouseLeave={endCancelHold}
+                onTouchStart={(e) => startCancelHold(e, order)}
+                onTouchEnd={endCancelHold}
+                onTouchCancel={endCancelHold}
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer transition-all active:scale-95 shadow-md shadow-rose-600/10"
+                title="Mantén presionado para cancelar"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+
+              {showCancelNotice && (
+                <div className="absolute bottom-14 right-0 bg-rose-600 text-white text-[10px] sm:text-[11px] font-bold px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none whitespace-nowrap animate-bounce z-50 border border-rose-500">
+                  ⚠️ Mantén presionado para cancelar la orden
+                </div>
+              )}
+              {cancelHoldProgress > 0 && (
+                <div className="absolute bottom-14 right-0 bg-slate-900 border border-rose-500 text-white text-[10px] sm:text-[11px] font-bold px-2.5 py-1.5 rounded-lg shadow-xl pointer-events-none whitespace-nowrap z-50 flex flex-col items-center gap-1">
+                  <span>Cancelando... {Math.round(cancelHoldProgress)}%</span>
+                  <div className="w-24 h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                    <div className="h-full bg-rose-500 transition-all duration-100" style={{ width: `${cancelHoldProgress}%` }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(order.status === 'delivered' || order.status === 'cancelled') && (
+          <div className="w-full text-center py-2 px-3 rounded-xl border border-slate-900 bg-slate-900/10 text-[10px] sm:text-xs text-slate-500 font-sans">
+            Esta orden se encuentra en estado histórico ({order.status === 'delivered' ? 'ENTREGADA' : 'CANCELADA'}) y no admite nuevas mutaciones.
+          </div>
+        )}
+
+        {onEditOrder && (
+          <button
+            onClick={() => onEditOrder(order)}
+            className="w-full mt-1.5 h-10 px-4 rounded-xl font-semibold text-xs tracking-wide uppercase transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm bg-slate-900 hover:bg-slate-850 border border-slate-800/80 text-slate-300 hover:text-white"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            <span>Editar Pedido</span>
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  if (showConfigPage) {
+    return (
+      <div className="space-y-6 animate-fade-in text-slate-100">
+        <div className="flex items-center gap-3 pb-4 border-b border-slate-900">
+          <button
+            onClick={() => setShowConfigPage(false)}
+            className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center"
+            title="Volver a Órdenes"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="h-6 w-px bg-slate-900" />
+          <div>
+            <h2 className="font-sans font-black text-lg sm:text-2xl text-white tracking-tight">Configurar módulo de órdenes.</h2>
+            <p className="text-[10px] sm:text-xs text-slate-500">Configura qué campos son visibles en la lista y en los detalles del pedido, y gestiona o crea nuevos campos.</p>
+          </div>
+        </div>
+        <OrderFieldsConfig />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in text-slate-100">
@@ -854,50 +1217,85 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
       {selectedOrder && (
         <div className="block xl:hidden space-y-6 animate-fade-in">
           {/* Back Navigation Bar */}
-          <div className="flex items-center gap-3 pb-4 border-b border-slate-900">
-            <button
-              onClick={() => setSelectedOrder(null)}
-              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center"
-              aria-label="Volver a Órdenes"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <div className="h-6 w-px bg-slate-900" />
-            <div className="min-w-0">
-              <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest block">Pedido Seleccionado</span>
-              <h3 className="font-sans font-black text-xs sm:text-sm text-white leading-tight truncate">
-                ID: {selectedOrder.id} — {selectedOrder.customer_name}
-              </h3>
+          <div className="flex items-center justify-between pb-4 border-b border-slate-900">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                onClick={() => setSelectedOrder(null)}
+                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center"
+                aria-label="Volver a Órdenes"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <div className="h-6 w-px bg-slate-900" />
+              <div className="min-w-0">
+                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest block">Pedido Seleccionado</span>
+                <h3 className="font-sans font-black text-xs sm:text-sm text-white leading-tight truncate">
+                  ID: {selectedOrder.id} — {selectedOrder.customer_name}
+                </h3>
+              </div>
             </div>
+
+            {/* Copy Button */}
+            <button
+              type="button"
+              onClick={() => handleCopyOrderDetails(selectedOrder)}
+              className="relative p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center shrink-0 ml-2"
+              title="Copiar información del pedido"
+            >
+              {copiedOrderId === selectedOrder.id ? (
+                <>
+                  <Check className="h-4 w-4 text-emerald-400" />
+                  <span className="absolute -top-8 right-0 bg-emerald-600 border border-emerald-500 text-white text-[9px] font-semibold px-2 py-0.5 rounded shadow-xl pointer-events-none whitespace-nowrap z-50 animate-fade-in">
+                    ¡Copiado!
+                  </span>
+                </>
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </button>
           </div>
 
           {/* Details Content (renders the existing detailed layout inline) */}
           <div className="rounded-2xl bg-slate-950 border border-slate-900 p-0 overflow-hidden shadow-2xl">
             {renderOrderDetailContent(selectedOrder)}
           </div>
+
+          {/* Action buttons at the bottom of the page */}
+          {renderOrderActions(selectedOrder)}
         </div>
       )}
 
       {/* 2. Main Order List View (Hidden on mobile/tablet when an order is selected, but always visible on desktop) */}
       <div className={selectedOrder ? "hidden xl:block space-y-6" : "space-y-6"}>
         {/* Header Title */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="font-sans font-black text-2xl text-white tracking-tight">Gestión de Ordenes</h2>
-        </div>
-        
-        {/* Quick statistics count */}
-        <div className="flex gap-2.5 text-[11px] font-mono text-slate-400">
-          <div className="px-3 py-1.5 rounded-xl border border-slate-950 bg-slate-900/40">
-            Filtradas: <span className="font-bold text-cyan-400">{filteredOrders.length}</span>
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+          <div>
+            <h2 className="font-sans font-black text-2xl text-white tracking-tight">Gestión de Ordenes</h2>
           </div>
-          <div className="px-3 py-1.5 rounded-xl border border-slate-950 bg-slate-900/40">
-            En Curso: <span className="font-bold text-amber-400">
-              {orders.filter(o => o.status === 'pending' || o.status === 'preparing').length}
-            </span>
+          
+          <div className="flex items-center gap-2.5">
+            {/* Quick statistics count */}
+            <div className="flex gap-2.5 text-[11px] font-mono text-slate-400">
+              <div className="px-3 py-1.5 rounded-xl border border-slate-950 bg-slate-900/40">
+                Mostrando: <span className="font-bold text-cyan-400">{filteredOrders.length}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl border border-slate-950 bg-slate-900/40">
+                En Curso: <span className="font-bold text-amber-400">
+                  {orders.filter(o => o.status === 'pending' || o.status === 'preparing').length}
+                </span>
+              </div>
+            </div>
+
+            {/* Config button (gear icon without label) */}
+            <button
+              onClick={() => setShowConfigPage(true)}
+              className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-xl border border-slate-950 bg-slate-900 hover:bg-slate-850 text-indigo-400 hover:text-indigo-300 transition-all flex items-center justify-center cursor-pointer shadow-md"
+              title="Personalizar columnas y visibilidad"
+            >
+              <Settings className="h-4.5 w-4.5" />
+            </button>
           </div>
         </div>
-      </div>
 
       {/* Grouping Status Filters and Search Bar with 8px vertical spacing */}
       <div className="flex flex-col gap-2 py-2">
@@ -969,7 +1367,7 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
           )}
         </div>
 
-        {/* Standalone Search Bar and icon-only Filter button with perfectly matching heights */}
+        {/* Standalone Search Bar, Customize, and icon-only Filter buttons with perfectly matching heights */}
         <div className="flex flex-row gap-3">
           <div className="relative flex-1 h-11">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -1008,15 +1406,15 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                 { id: 'all', label: 'Todos' },
                 { id: 'this_week', label: 'Esta Semana' },
                 { id: 'this_month', label: 'Este Mes' },
-                { id: 'june', label: 'Junio' },
-                { id: 'july', label: 'Julio' },
               ].map((opt) => (
                 <button
                   key={opt.id}
                   type="button"
                   onClick={() => {
-                    setDateRangeFilter(opt.id as any);
+                    setDateRangeFilter(opt.id);
                     setCustomDateRange(null);
+                    setShowMonthDropdown(false);
+                    setShowCalendarPopover(false);
                   }}
                   className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all cursor-pointer ${
                     dateRangeFilter === opt.id
@@ -1028,11 +1426,58 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                 </button>
               ))}
 
+              {/* Month Dropdown ("Mes" button with dropdown of elapsed months this year) */}
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMonthDropdown(!showMonthDropdown);
+                    setShowCalendarPopover(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all cursor-pointer flex items-center gap-1.5 ${
+                    dateRangeFilter.startsWith('month_')
+                      ? 'bg-indigo-600/25 border-indigo-500 text-indigo-300 font-bold'
+                      : 'bg-slate-950 border-slate-900 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>
+                    {dateRangeFilter.startsWith('month_')
+                      ? SPANISH_MONTHS[parseInt(dateRangeFilter.split('_')[1], 10)]
+                      : 'Mes'}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+
+                {showMonthDropdown && (
+                  <div className="absolute left-0 mt-2 py-1.5 w-40 rounded-lg bg-slate-950 border border-slate-900 shadow-2xl z-50 overflow-hidden">
+                    {SPANISH_MONTHS.slice(0, 7).map((m, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setDateRangeFilter(`month_${idx}`);
+                          setCustomDateRange(null);
+                          setShowMonthDropdown(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-slate-900 font-mono ${
+                          dateRangeFilter === `month_${idx}` ? 'text-indigo-400 font-bold bg-slate-900/50' : 'text-slate-400'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Calendario con Popover de Rango de Fechas */}
               <div className="relative inline-block">
                 <button
                   type="button"
-                  onClick={() => setShowCalendarPopover(!showCalendarPopover)}
+                  onClick={() => {
+                    setShowCalendarPopover(!showCalendarPopover);
+                    setShowMonthDropdown(false);
+                  }}
                   className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all cursor-pointer flex items-center gap-2 ${
                     dateRangeFilter === 'custom'
                       ? 'bg-indigo-600/25 border-indigo-500 text-indigo-300 font-bold'
@@ -1125,32 +1570,49 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
           {/* Sorting */}
           <div className="md:col-span-5 space-y-2">
             <label className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Ordenar Por:</label>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-lg sm:rounded-xl border border-slate-950 bg-slate-950 text-slate-200 text-xs focus:border-slate-800 focus:outline-none transition-colors font-mono"
-            >
-              <option value="delivery_earliest">Fecha de entrega: más pronta a más lejana</option>
-              <option value="delivery_latest">Fecha de entrega: más lejana a más pronta</option>
-              <option value="created_newest">Fecha de creación: más reciente</option>
-              <option value="created_oldest">Fecha de creación: más antigua</option>
-              <option value="price_highest">Monto total: mayor a menor</option>
-              <option value="price_lowest">Monto total: menor a mayor</option>
-            </select>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="w-full pl-3 pr-8 py-2.5 rounded-lg sm:rounded-xl border border-slate-950 bg-slate-950 text-slate-200 text-xs focus:border-slate-800 focus:outline-none transition-colors font-mono appearance-none"
+                >
+                  <option value="delivery">Fecha de entrega</option>
+                  <option value="created">Fecha de creación</option>
+                  <option value="price">Monto total</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="px-3 rounded-lg sm:rounded-xl bg-slate-950 border border-slate-950 text-slate-400 hover:text-white hover:border-slate-900 transition-all cursor-pointer flex items-center justify-center shrink-0"
+                title={sortOrder === 'asc' ? 'Orden Ascendente' : 'Orden Descendente'}
+              >
+                {sortOrder === 'asc' ? (
+                  <ArrowUp className="h-4 w-4 text-indigo-400" />
+                ) : (
+                  <ArrowDown className="h-4 w-4 text-indigo-400" />
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Delivery type filter */}
           <div className="md:col-span-4 space-y-2">
             <label className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Tipo de Entrega:</label>
-            <select
-              value={deliveryTypeFilter}
-              onChange={(e) => setDeliveryTypeFilter(e.target.value as any)}
-              className="w-full px-3 py-2.5 rounded-lg sm:rounded-xl border border-slate-950 bg-slate-950 text-slate-200 text-xs focus:border-slate-800 focus:outline-none transition-colors font-mono"
-            >
-              <option value="all">Todos los tipos</option>
-              <option value="delivery">Domicilio (Delivery)</option>
-              <option value="tienda">Retiro en Tienda</option>
-            </select>
+            <div className="relative">
+              <select
+                value={deliveryTypeFilter}
+                onChange={(e) => setDeliveryTypeFilter(e.target.value as any)}
+                className="w-full pl-3 pr-8 py-2.5 rounded-lg sm:rounded-xl border border-slate-950 bg-slate-950 text-slate-200 text-xs focus:border-slate-800 focus:outline-none transition-colors font-mono appearance-none"
+              >
+                <option value="all">Todos los tipos</option>
+                <option value="delivery">Domicilio (Delivery)</option>
+                <option value="tienda">Retiro en Tienda</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
+            </div>
           </div>
 
           {/* Custom Stylized Checkboxes for toggles */}
@@ -1199,7 +1661,9 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
       {/* Main operational grid layout (List + Detail Pane) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Side: Order List (same row structure for mobile and tablet/desktop) */}
-        <div className={`lg:col-span-12 ${selectedOrder ? 'xl:col-span-7' : 'xl:col-span-12'} transition-all duration-300 space-y-4`}>
+        <div className={`lg:col-span-12 ${
+          selectedOrder ? 'xl:col-span-7' : 'xl:col-span-12'
+        } xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto xl:pr-2 scrollbar-dark transition-all duration-300 space-y-4`}>
           {filteredOrders.length === 0 ? (
             <div className="p-16 rounded-2xl border border-slate-950 bg-slate-900/15 text-center">
               <div className="h-12 w-12 rounded-xl bg-slate-950 border border-slate-900 flex items-center justify-center mx-auto text-slate-500 mb-3">
@@ -1222,19 +1686,19 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                     key={order.id}
                     id={`order-card-${order.id}`}
                     onClick={() => setSelectedOrder(isSelected ? null : order)}
-                    className={`p-3 sm:p-4 rounded-lg sm:rounded-2xl border transition-all cursor-pointer flex gap-3 sm:gap-4 items-center justify-between ${
+                    className={`p-3 sm:p-4 rounded-lg sm:rounded-2xl border transition-all cursor-pointer flex gap-3 sm:gap-4 items-stretch justify-between ${
                       isSelected 
                         ? 'bg-slate-900/70 border-indigo-500/55 shadow-lg shadow-indigo-500/5' 
                         : 'bg-slate-900/25 border-slate-950 hover:bg-slate-900/40 hover:border-slate-900'
                     }`}
                   >
-                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                    <div className="flex items-stretch gap-3 sm:gap-4 min-w-0 flex-1">
                       {/* Square rounded bouquet thumbnail image on left (mobile responsive) */}
-                      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden border border-slate-950 shrink-0 relative bg-slate-950">
+                      <div className="w-14 sm:w-16 rounded-lg sm:rounded-xl overflow-hidden border border-slate-950 shrink-0 relative bg-slate-950 self-stretch min-h-[56px] sm:min-h-[64px]">
                         <img 
                           src={previewImage} 
                           alt="Vista previa" 
-                          className="w-full h-full object-cover"
+                          className="absolute inset-0 w-full h-full object-cover"
                           referrerPolicy="no-referrer"
                         />
                       </div>
@@ -1250,20 +1714,58 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                         </div>
 
                         {/* Customer Name is now the main primary heading, product description is the subtitle */}
-                        <h3 className="font-sans font-black text-xs sm:text-sm text-white truncate leading-tight">
-                          {order.customer_name}
-                        </h3>
-                        <p className="text-[11px] sm:text-xs text-slate-400 truncate mt-0.5 font-medium leading-normal">
-                          {order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}
-                        </p>
+                        {configFields.find(f => f.key === 'customer_name')?.showInList !== false && (
+                          <h3 className="font-sans font-black text-xs sm:text-sm text-white truncate leading-tight">
+                            {order.customer_name}
+                          </h3>
+                        )}
+                        {configFields.find(f => f.key === 'pedido')?.showInList !== false && (
+                          <p className="text-[11px] sm:text-xs text-slate-400 truncate mt-0.5 font-medium leading-normal">
+                            {order.pedido || (order.items && order.items[0]?.name) || 'Arreglo Floral'}
+                          </p>
+                        )}
+
+                        {/* Additional dynamic list fields */}
+                        {(() => {
+                          const additionalListFields = configFields.filter(f => 
+                            f.showInList && 
+                            f.visible && 
+                            !['customer_name', 'pedido', 'fechaEntrega', 'horaEntrega', 'total_price', 'clienteNombre', 'created_at'].includes(f.key)
+                          );
+                          if (additionalListFields.length === 0) return null;
+
+                          return (
+                            <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[9px] sm:text-[10px] text-slate-400">
+                              {additionalListFields.map(field => {
+                                const val = order[field.key as keyof Order] ?? (order.custom_fields && (order.custom_fields as any)[field.key]);
+                                if (val === undefined || val === null || val === '') return null;
+
+                                let displayVal = String(val);
+                                if (field.type === 'boolean') {
+                                  displayVal = val === true || val === 'true' ? 'Sí' : 'No';
+                                } else if (field.type === 'date') {
+                                  displayVal = formatSpanishDate(displayVal);
+                                }
+
+                                return (
+                                  <span key={field.key} className="bg-slate-950/45 px-1.5 py-0.5 rounded border border-slate-900/50">
+                                    <strong className="text-slate-500">{field.label}:</strong> {displayVal}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
 
                         {/* Bottom line: Spanish Date and Time formatted (reduced spacing, gap-2 is 8px, gap-1 is 4px) */}
                         <div className="flex items-center gap-2 text-[9px] sm:text-[10px] text-slate-400 font-mono mt-1.5 whitespace-nowrap overflow-hidden">
-                          <div className="flex items-center gap-1 shrink-0">
-                            <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-indigo-400" />
-                            <span className="font-semibold text-slate-200">{formatSpanishDate(order.fechaEntrega)}</span>
-                          </div>
-                          {order.horaEntrega && (
+                          {configFields.find(f => f.key === 'fechaEntrega')?.showInList !== false && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-indigo-400" />
+                              <span className="font-semibold text-slate-200">{formatSpanishDate(order.fechaEntrega)}</span>
+                            </div>
+                          )}
+                          {configFields.find(f => f.key === 'horaEntrega')?.showInList !== false && order.horaEntrega && (
                             <div className="flex items-center gap-1 shrink-0">
                               <Clock className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-indigo-400" />
                               <span className="font-semibold text-slate-200">{formatSpanishTime(order.horaEntrega)}</span>
@@ -1276,7 +1778,7 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
                     {/* Right side block containing Price & Action button within the same padding layout */}
                     <div className="flex flex-col items-end justify-between shrink-0 self-stretch min-h-[56px] sm:min-h-[64px]">
                       <p className="font-sans font-black text-slate-300 text-[11px] sm:text-xs leading-none">
-                        {order.tasaDeCambioT === 'EUR' ? '€' : '$'}{order.total_price.toLocaleString()}
+                        {order.tasaDeCambioT === 'EUR' ? '€' : '$'}{(order.precioFacturado ?? order.total_price ?? 0).toLocaleString()}
                       </p>
 
                       <div onClick={(e) => e.stopPropagation()} className="mt-auto">
@@ -1323,23 +1825,60 @@ export default function OrderList({ orders, updateOrderStatus }: OrderListProps)
 
         {/* Right Side: Detailed Panel (Inline view for Desktop) */}
         {selectedOrder && (
-          <div className="hidden xl:block xl:col-span-5 rounded-2xl bg-slate-950 border border-slate-900 shadow-2xl relative sticky top-24 overflow-hidden max-h-[calc(100vh-120px)] flex flex-col no-scrollbar">
-            {/* Direct close button (floating glassmorphism X) */}
-            <button
-              onClick={() => setSelectedOrder(null)}
-              className="absolute top-4 right-4 z-50 p-2.5 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-800/80 text-slate-300 hover:text-white hover:border-slate-700 hover:scale-110 active:scale-90 transition-all cursor-pointer shadow-xl"
-              aria-label="Cerrar panel"
-            >
-              <X className="h-4.5 w-4.5" />
-            </button>
-            <div className="flex-1 overflow-y-auto no-scrollbar">
+          <div className="hidden xl:block xl:col-span-5 space-y-4 sticky top-24 xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto pr-2 scrollbar-dark pb-6 animate-fade-in">
+            {/* Header bar for Desktop */}
+            <div className="flex items-center justify-between pb-3.5 border-b border-slate-900 bg-slate-950/20 backdrop-blur-sm p-3 rounded-2xl border border-slate-900/40">
+              <div className="min-w-0">
+                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest block font-bold">Pedido Seleccionado</span>
+                <h3 className="font-sans font-black text-xs sm:text-sm text-white leading-tight truncate">
+                  ID: {selectedOrder.id.substring(0, 8)} — {selectedOrder.customer_name}
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-4 shrink-0">
+                {/* Copy Button */}
+                <button
+                  type="button"
+                  onClick={() => handleCopyOrderDetails(selectedOrder)}
+                  className="relative p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center shrink-0"
+                  title="Copiar información del pedido"
+                >
+                  {copiedOrderId === selectedOrder.id ? (
+                    <>
+                      <Check className="h-4 w-4 text-emerald-400" />
+                      <span className="absolute -top-8 right-0 bg-emerald-600 border border-emerald-500 text-white text-[9px] font-semibold px-2 py-0.5 rounded shadow-xl pointer-events-none whitespace-nowrap z-50 animate-fade-in">
+                        ¡Copiado!
+                      </span>
+                    </>
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </button>
+
+                {/* Close Button */}
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all cursor-pointer flex items-center justify-center shrink-0"
+                  aria-label="Cerrar panel"
+                  title="Cerrar panel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Information Box/Card - overflow-hidden prevents image corner bleeding/overflow */}
+            <div className="rounded-2xl bg-slate-950 border border-slate-900 p-0 shadow-2xl relative overflow-hidden">
               {renderOrderDetailContent(selectedOrder)}
             </div>
+
+            {/* Action buttons at the bottom of the page */}
+            {renderOrderActions(selectedOrder)}
           </div>
         )}
       </div>
 
-      </div> {/* Close 2. Main Order List View wrapper */}
+      </div>
     </div>
   );
 }

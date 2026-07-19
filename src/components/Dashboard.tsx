@@ -25,9 +25,19 @@ import {
   RefreshCw,
   Bell,
   Euro,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Boxes,
+  Coins,
+  Users,
+  TrendingDown,
+  Flower,
+  Truck,
+  Sparkles,
+  Info,
+  Wand2,
+  Gift
 } from 'lucide-react';
-import { Order, DashboardMetrics, RealTimeNotification } from '../types';
+import { Order, DashboardMetrics, RealTimeNotification, StockItem, FinanceTransaction, StaffMember } from '../types';
 import { calculateMetrics } from '../utils/mockData';
 
 interface DashboardProps {
@@ -35,123 +45,55 @@ interface DashboardProps {
   notifications: RealTimeNotification[];
   clearNotifications: () => void;
   triggerMockOrder: () => void;
+  activeModules?: string[];
+  addNotification?: (type: 'info' | 'success' | 'warning' | 'error', title: string, message: string) => void;
+  setActiveTab?: (tab: string) => void;
+  stock?: StockItem[];
+  setStock?: React.Dispatch<React.SetStateAction<StockItem[]>>;
+  transactions?: FinanceTransaction[];
+  setTransactions?: React.Dispatch<React.SetStateAction<FinanceTransaction[]>>;
+  staff?: StaffMember[];
+  setStaff?: React.Dispatch<React.SetStateAction<StaffMember[]>>;
+  exchangeState?: {
+    usd_bcv: number;
+    eur_bcv: number;
+    binance: number;
+    lastUpdated: string;
+    loading: boolean;
+    isMock: boolean;
+  };
+  fetchRates?: () => Promise<void>;
 }
 
 export default function Dashboard({ 
   orders, 
   notifications, 
   clearNotifications,
-  triggerMockOrder
-}: DashboardProps) {
-  const metrics = useMemo(() => calculateMetrics(orders), [orders]);
-
-  // --- Exchange Rates State & Fetcher ---
-  const [exchangeState, setExchangeState] = useState({
+  triggerMockOrder,
+  activeModules = [],
+  addNotification,
+  setActiveTab,
+  stock = [],
+  setStock,
+  transactions = [],
+  setTransactions,
+  staff = [],
+  setStaff,
+  exchangeState = {
     usd_bcv: 42.15,
     eur_bcv: 45.40,
     binance: 44.90,
     lastUpdated: '',
-    loading: true,
-    isMock: false,
-  });
+    loading: false,
+    isMock: true,
+  },
+  fetchRates
+}: DashboardProps) {
+  const metrics = useMemo(() => calculateMetrics(orders), [orders]);
 
   const [calcUsd, setCalcUsd] = useState<string>('100');
   const [calcRateType, setCalcRateType] = useState<'usd' | 'eur' | 'binance'>('usd');
   const [isInputInBs, setIsInputInBs] = useState<boolean>(false);
-
-  const fetchRates = useCallback(async () => {
-    setExchangeState(prev => ({ ...prev, loading: true }));
-    try {
-      const [cotizacionesRes, paraleloRes, oficialRes] = await Promise.allSettled([
-        fetch('https://ve.dolarapi.com/v1/cotizaciones'),
-        fetch('https://ve.dolarapi.com/v1/dolares/paralelo'),
-        fetch('https://ve.dolarapi.com/v1/dolares/oficial')
-      ]);
-
-      let usdBcv = 42.15;
-      let eurBcv = 45.40;
-      let binance = 44.90;
-      let parsedSuccessfully = false;
-
-      // Parse Paralelo/Binance
-      if (paraleloRes.status === 'fulfilled' && paraleloRes.value.ok) {
-        try {
-          const data = await paraleloRes.value.json();
-          if (data && typeof data.promedio === 'number') {
-            binance = data.promedio;
-            parsedSuccessfully = true;
-          }
-        } catch (e) {
-          console.warn('Error parsing parallel rate', e);
-        }
-      }
-
-      // Parse Oficial USD
-      if (oficialRes.status === 'fulfilled' && oficialRes.value.ok) {
-        try {
-          const data = await oficialRes.value.json();
-          if (data && typeof data.promedio === 'number') {
-            usdBcv = data.promedio;
-            parsedSuccessfully = true;
-          }
-        } catch (e) {
-          console.warn('Error parsing oficial USD rate', e);
-        }
-      }
-
-      // Parse Cotizaciones (mainly for Euro)
-      if (cotizacionesRes.status === 'fulfilled' && cotizacionesRes.value.ok) {
-        try {
-          const data = await cotizacionesRes.value.json();
-          if (Array.isArray(data)) {
-            // Fallback for USD Oficial if direct endpoint wasn't used or failed
-            if (usdBcv === 42.15) {
-              const usdItem = data.find(item => 
-                (item.moneda === 'USD' && item.nombre?.toLowerCase().includes('oficial')) ||
-                (item.nombre?.toLowerCase().includes('oficial'))
-              );
-              if (usdItem && typeof usdItem.promedio === 'number') {
-                usdBcv = usdItem.promedio;
-                parsedSuccessfully = true;
-              }
-            }
-
-            // Find Euro
-            const eurItem = data.find(item => 
-              item.moneda === 'EUR' || item.nombre?.toLowerCase().includes('euro')
-            );
-            if (eurItem && typeof eurItem.promedio === 'number') {
-              eurBcv = eurItem.promedio;
-              parsedSuccessfully = true;
-            }
-          }
-        } catch (e) {
-          console.warn('Error parsing cotizaciones for Euro', e);
-        }
-      }
-
-      setExchangeState({
-        usd_bcv: usdBcv,
-        eur_bcv: eurBcv,
-        binance: binance,
-        lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        loading: false,
-        isMock: !parsedSuccessfully,
-      });
-    } catch (err) {
-      console.warn('Failed to fetch exchange rates, keeping fallback values', err);
-      setExchangeState(prev => ({
-        ...prev,
-        loading: false,
-        isMock: true,
-        lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (Simulado)'
-      }));
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchRates();
-  }, [fetchRates]);
 
   // Color constants matching our ZenitLabs theme
   const COLORS = {
@@ -226,6 +168,116 @@ export default function Dashboard({
       { name: 'Crítica', 'Órdenes': counts.critical, color: '#ef4444' },
     ];
   }, [orders]);
+
+  // --- MODULAR DASHBOARD PROPS ADAPTATION (Fase 3 Core) ---
+  const dashboardStock = stock;
+  const dashboardStaff = staff;
+  const customExpenses = useMemo(() => {
+    return transactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+  }, [transactions]);
+
+  // Analytics dynamic calculation from real orders
+  const analyticsData = useMemo(() => {
+    const productCounts: { [key: string]: number } = {};
+    let totalItemsCount = 0;
+    let rosesCount = 0;
+    let surpriseCount = 0;
+    let dedicatoriaCount = 0;
+
+    orders.forEach(order => {
+      // Count surprise deliveries
+      if (order.entregaSorpresa) {
+        surpriseCount++;
+      }
+      // Count dedications
+      if (order.dedicatoria) {
+        dedicatoriaCount++;
+      }
+      // Count roses
+      if (order.numeroRosas) {
+        rosesCount += order.numeroRosas;
+      }
+
+      // Products popular counts from items
+      if (order.items && Array.isArray(order.items)) {
+        order.items.forEach(item => {
+          productCounts[item.name] = (productCounts[item.name] || 0) + item.quantity;
+          totalItemsCount += item.quantity;
+        });
+      }
+    });
+
+    // Find star product
+    let starProduct = 'Ninguno';
+    let starProductQty = 0;
+    Object.entries(productCounts).forEach(([name, qty]) => {
+      if (qty > starProductQty) {
+        starProduct = name;
+        starProductQty = qty;
+      }
+    });
+
+    return {
+      starProduct,
+      starProductQty,
+      rosesCount,
+      surpriseCount,
+      dedicatoriaCount,
+      surprisePercent: orders.length > 0 ? Math.round((surpriseCount / orders.length) * 100) : 0
+    };
+  }, [orders]);
+
+  // Handle Quick Re-supply from Dashboard
+  const handleQuickResupply = (itemId: string, name: string) => {
+    if (setStock) {
+      setStock(prev => prev.map(item => item.id === itemId ? { ...item, qty: item.qty + 50 } : item));
+    }
+    if (addNotification) {
+      addNotification('success', 'Reabastecimiento Express', `Se han añadido +50 unidades de "${name}" al almacén desde el Dashboard.`);
+    }
+  };
+
+  // Handle Quick Staff Dispatch toggle
+  const handleQuickStaffToggle = (staffId: string, name: string) => {
+    const statuses = ['Disponible', 'Preparando', 'En Ruta', 'Descanso'];
+    if (setStaff) {
+      setStaff(prev => prev.map(member => {
+        if (member.id === staffId) {
+          const nextStatus = statuses[(statuses.indexOf(member.status) + 1) % statuses.length];
+          if (addNotification) {
+            addNotification('info', 'Despacho de Personal', `El estado de ${name} ha sido modificado a: ${nextStatus.toUpperCase()}`);
+          }
+          return { ...member, status: nextStatus };
+        }
+        return member;
+      }));
+    }
+  };
+
+  // Handle Record Quick Expense
+  const handleRecordQuickExpense = () => {
+    if (setTransactions) {
+      const newExpense: FinanceTransaction = {
+        id: 'f_exp_' + Math.random().toString(36).substring(2, 9),
+        type: 'expense',
+        desc: 'Reposición de empaques (Dashboard Quick)',
+        amount: 50,
+        date: 'Hoy'
+      };
+      setTransactions(prev => [newExpense, ...prev]);
+    }
+    if (addNotification) {
+      addNotification('warning', 'Egreso de Caja Chica', `Se ha registrado un gasto menor de $50.00 USD por reposición de empaques.`);
+    }
+  };
+
+  const isInventoryActive = activeModules.includes('inventory-module');
+  const isFinanceActive = activeModules.includes('finance-module');
+  const isStaffActive = activeModules.includes('admin-module');
+  const isAnalyticsActive = activeModules.includes('analytics-module');
+  const isFloristryActive = activeModules.includes('floristry-addons');
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -756,6 +808,249 @@ export default function Dashboard({
           </div>
         </div>
       </div>
+
+      {/* --- MÓDULOS OPERATIVOS ACTIVOS (Fase 2) --- */}
+      {(isInventoryActive || isFinanceActive || isStaffActive || isAnalyticsActive || isFloristryActive) ? (
+        <div className="space-y-6 pt-8 border-t border-slate-900 animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-pink-400" />
+                <h3 className="font-sans font-extrabold text-lg text-white tracking-tight">
+                  Integración de Módulos Activos (Fase 2)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Visualización consolidada de micro-módulos integrados con el pipeline central en tiempo real.
+              </p>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded bg-pink-500/10 text-pink-300 border border-pink-500/20 self-start sm:self-auto">
+              SaaS Activo • {activeModules.filter(id => id !== 'core-orders').length} Módulos
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* WIDGET 1: INVENTARIO */}
+            {isInventoryActive && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800/80 hover:border-amber-500/25 transition-all flex flex-col justify-between space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Boxes className="h-4.5 w-4.5 text-amber-400" />
+                    <span className="text-xs font-bold text-slate-200 font-sans">Nivel de Inventario</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-amber-950/40 text-amber-400 border border-amber-500/10 font-bold">
+                    Operativo
+                  </span>
+                </div>
+
+                <div className="space-y-3 flex-1 py-1">
+                  {dashboardStock.map(item => {
+                    const isLow = item.qty <= item.min;
+                    return (
+                      <div key={item.id} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">{item.name}</span>
+                        <div className="flex items-center gap-2.5">
+                          <span className={`font-mono font-bold ${isLow ? 'text-rose-400 font-extrabold' : 'text-slate-200'}`}>
+                            {item.qty} {item.unit}
+                          </span>
+                          {isLow ? (
+                            <button 
+                              onClick={() => handleQuickResupply(item.id, item.name)}
+                              className="text-[9px] bg-amber-500/15 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded hover:bg-amber-500/30 transition-all font-bold cursor-pointer"
+                            >
+                              Surtir
+                            </button>
+                          ) : (
+                            <span className="text-[9px] text-slate-600 font-mono">OK</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-3 border-t border-slate-950/40 flex items-center justify-between text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1"><Info className="h-3 w-3" /> Auto-descuento activo</span>
+                  <button 
+                    onClick={() => {
+                      if (setStock) {
+                        setStock(prev => prev.map(i => ({ ...i, qty: i.qty + 20 })));
+                      }
+                      if (addNotification) addNotification('success', 'Suministro Masivo', 'Se han abastecido todos los insumos botánicos (+20 unidades cada uno).');
+                    }} 
+                    className="text-amber-400 hover:text-amber-300 font-bold cursor-pointer"
+                  >
+                    Surtir Todo
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* WIDGET 2: CONTABILIDAD Y FINANZAS */}
+            {isFinanceActive && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800/80 hover:border-emerald-500/25 transition-all flex flex-col justify-between space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Coins className="h-4.5 w-4.5 text-emerald-400" />
+                    <span className="text-xs font-bold text-slate-200 font-sans">Flujo de Caja Consolidado</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-emerald-950/40 text-emerald-400 border border-emerald-500/10 font-bold">
+                    Fintech
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs flex-1 py-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Ingresos Totales (Neto):</span>
+                    <span className="font-mono text-emerald-400 font-bold">${metrics.totalRevenue.toFixed(2)} USD</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Egresos / Gastos Hoy:</span>
+                    <span className="font-mono text-rose-400 font-bold">${customExpenses.toFixed(2)} USD</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-950/40">
+                    <span className="text-slate-300 font-semibold">Flujo Neto Estimado:</span>
+                    <span className="font-mono text-white font-extrabold">${(metrics.totalRevenue - customExpenses).toFixed(2)} USD</span>
+                  </div>
+                  <div className="text-[9px] text-slate-500 font-mono mt-1 text-right">
+                    Equiv: Bs. {((metrics.totalRevenue - customExpenses) * exchangeState.usd_bcv).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-950/40 flex items-center justify-between text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1"><Info className="h-3 w-3" /> Tasa BCV: {exchangeState.usd_bcv.toFixed(2)}</span>
+                  <button 
+                    onClick={handleRecordQuickExpense} 
+                    className="text-emerald-400 hover:text-emerald-300 font-bold cursor-pointer"
+                  >
+                    + Registrar Egreso
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* WIDGET 3: PERSONAL Y LOGÍSTICA */}
+            {isStaffActive && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800/80 hover:border-violet-500/25 transition-all flex flex-col justify-between space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4.5 w-4.5 text-violet-400" />
+                    <span className="text-xs font-bold text-slate-200 font-sans">Asignación de Personal</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-violet-950/40 text-violet-300 border border-violet-500/10 font-bold">
+                    Logística
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs flex-1 py-1">
+                  {dashboardStaff.map(member => (
+                    <div key={member.id} className="flex items-center justify-between">
+                      <span className="text-slate-400">{member.name} ({member.role.split(' ')[0]})</span>
+                      <button 
+                        onClick={() => handleQuickStaffToggle(member.id, member.name)}
+                        className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded hover:opacity-80 transition-all cursor-pointer ${
+                          member.status === 'Disponible' ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/10' :
+                          member.status === 'Preparando' ? 'bg-indigo-950/40 text-indigo-400 border border-indigo-500/10' :
+                          member.status === 'En Ruta' ? 'bg-amber-950/40 text-amber-400 border border-amber-500/10' :
+                          'bg-slate-850 text-slate-500 border border-slate-800'
+                        }`}
+                      >
+                        {member.status}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-3 border-t border-slate-950/40 flex items-center justify-between text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1"><Truck className="h-3 w-3" /> Coordinación activa</span>
+                  <span className="text-violet-400 font-bold text-[10px]">Click para alternar</span>
+                </div>
+              </div>
+            )}
+
+            {/* WIDGET 4: INTELIGENCIA Y PREVISIONES */}
+            {isAnalyticsActive && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800/80 hover:border-cyan-500/25 transition-all flex flex-col justify-between space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4.5 w-4.5 text-cyan-400" />
+                    <span className="text-xs font-bold text-slate-200 font-sans">Sugerencias e Inteligencia</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/40 text-cyan-400 border border-cyan-500/10 font-bold">
+                    Predictivo
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs flex-1 py-1">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-slate-400">Producto Estrella:</span>
+                    <span className="font-bold text-white max-w-[140px] truncate block text-right" title={analyticsData.starProduct}>
+                      {analyticsData.starProduct}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Previsión Demanda:</span>
+                    <span className="font-semibold text-emerald-400 font-mono">Alta (+14% Temporada Alta)</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950 border border-slate-950/60 text-[10px] text-slate-400 leading-relaxed mt-1">
+                    💡 <strong>Sugerencia ZenitLabs:</strong> Abastece inventario de <em>{analyticsData.starProduct === 'Ninguno' ? 'Empaques Premium' : analyticsData.starProduct}</em>. La tendencia proyecta alta demanda en las próximas 48 horas.
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-950/40 flex items-center justify-between text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1"><Info className="h-3 w-3" /> Algoritmo IA activo</span>
+                  <span className="text-cyan-400 font-bold">SaaS Pro</span>
+                </div>
+              </div>
+            )}
+
+            {/* WIDGET 5: MÉTRICAS DE PERSONALIZACIÓN */}
+            {isFloristryActive && (
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800/80 hover:border-pink-500/25 transition-all flex flex-col justify-between space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Gift className="h-4.5 w-4.5 text-pink-400" />
+                    <span className="text-xs font-bold text-slate-200 font-sans">Métricas de Personalización</span>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-pink-950/40 text-pink-300 border border-pink-500/10 font-bold">
+                    Especial
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs flex-1 py-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Unidades Especiales hoy:</span>
+                    <span className="font-mono text-pink-400 font-bold">{analyticsData.rosesCount} unidades</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Entregas Sorpresa:</span>
+                    <span className="font-mono text-white font-bold">{analyticsData.surpriseCount} ({analyticsData.surprisePercent}%)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Dedicatorias de Regalo:</span>
+                    <span className="font-mono text-white font-bold">{analyticsData.dedicatoriaCount} mensajes</span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-950/40 flex items-center justify-between text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1"><Info className="h-3 w-3" /> Datos de personalización reales</span>
+                  <span className="text-pink-400 font-bold">Detalles Activos</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="p-5 rounded-2xl bg-slate-900/30 border border-slate-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-slate-400 gap-3 animate-fade-in">
+          <span className="flex items-center gap-2"><Info className="h-4 w-4 text-indigo-400 shrink-0" /> Configura tu modelo de negocio o activa módulos Premium para desplegar herramientas de inventario, finanzas y analítica.</span>
+          <button 
+            onClick={() => setActiveTab && setActiveTab('module-store')}
+            className="text-indigo-400 hover:text-indigo-300 font-semibold transition-colors cursor-pointer shrink-0"
+          >
+            Ver Catálogo →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

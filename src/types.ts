@@ -43,6 +43,8 @@ export interface Order {
   imageRef?: string;
   entregaDatetime?: string;
   notaEntrega?: string;
+  custom_fields?: Record<string, any>;
+  [key: string]: any;
 }
 
 export interface OrderItem {
@@ -70,5 +72,29 @@ export interface RealTimeNotification {
   type: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;
+  orderId?: string;
+}
+
+export interface StockItem {
+  id: string;
+  name: string;
+  qty: number;
+  min: number;
+  unit: string;
+}
+
+export interface FinanceTransaction {
+  id: string;
+  type: 'income' | 'expense';
+  desc: string;
+  amount: number;
+  date: string;
+}
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
   orderId?: string;
 }

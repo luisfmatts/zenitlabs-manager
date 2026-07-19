@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, ShoppingCart, PlusCircle, Database, Menu, X, Radio, ArrowRightLeft } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, PlusCircle, Database, Menu, X, Radio, ArrowRightLeft, Wand2 } from 'lucide-react';
 
 interface SidebarProps {
   activeTab: string;
@@ -23,6 +23,7 @@ export default function Sidebar({
     { id: 'orders', label: 'Gestión de Órdenes', icon: ShoppingCart, badge: orderCount },
     { id: 'create', label: 'Nueva Orden', icon: PlusCircle },
     { id: 'database', label: 'Conexión Supabase', icon: Database },
+    { id: 'module-store', label: 'Tienda y Asistente', icon: Wand2 },
   ];
 
   const handleNavClick = (tabId: string) => {
